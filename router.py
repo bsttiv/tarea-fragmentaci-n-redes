@@ -75,6 +75,25 @@ def fragment_IP_packet(packet: header.Header, MTU: int):
         fragmentos.append(p)
     return fragmentos
 
+def reassemble_IP_packet(fragment_list: list[header.Header]) -> header.Header:
+    ordenados = sorted(fragment_list, key=lambda f: int.from_bytes(f.offset))
+    esperado = 0
+    for f in ordenados:
+        if int.from_bytes(f.offset) != esperado:
+            return None
+        esperado += len(f.msg)
+    if int.from_bytes(ordenados[-1].flag) != 0:
+        return None
+    cualquiera = ordenados[0]
+    puerto = int.from_bytes(cualquiera.puerto)
+    ttl = int.from_bytes(cualquiera.ttl)
+    id = int.from_bytes(cualquiera.id)
+    p = header.Header(num_to_ip(int.from_bytes(cualquiera.ip)).encode(), puerto, b"", ttl, 0, 0, id, 0)
+    for paquete in ordenados:
+        p.msg += paquete.msg
+    p.tamaño = len(p.msg).to_bytes(4)
+    return p
+
 class Router:
     def __init__(self, ip, puerto, archivo):
         self.ip = ip
@@ -87,6 +106,8 @@ class Router:
         # Las rutas default (/0) usan el area (routes_file_name, ("default",) y solo se usan si
         # ninguna otra ruta calza.
         self.visitadas = {}
+        # Diccionario para los fragmentos
+        self.fragmentos = {}
     def start(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind((self.ip, self.puerto))
@@ -107,12 +128,22 @@ class Router:
                     print(f"No hay rutas hacia {ip}:{puerto} para paquete {str(msg_dec)}")
                     continue
                 forward, mtu = res
-                print(f"Redirigiendo paquete {str(msg_dec)} con destino final {ip} desde {self.ip}:{self.puerto} hacia {forward}")
-                msg_dec.ttl = (int.from_bytes(msg_dec.ttl) - 1).to_bytes(1)
-                to_bytes = create_packet(msg_dec)
-                sock.sendto(to_bytes, forward)
+                paquetes = fragment_IP_packet(msg_dec, mtu)
+                for paquete in paquetes:
+                    print(f"Redirigiendo paquete {str(paquete)} con destino final {ip} desde {self.ip}:{self.puerto} hacia {forward}")
+                    paquete.ttl = (int.from_bytes(paquete.ttl) - 1).to_bytes(1)
+                    to_bytes = create_packet(paquete)
+                    sock.sendto(to_bytes, forward)
                 continue
-            print(msg_dec.msg.decode())
+            id = int.from_bytes(msg_dec.id)
+            if id in self.fragmentos:
+                self.fragmentos[id].append(msg_dec)
+            else:
+                self.fragmentos[id] = [msg_dec]
+            ensamblado = reassemble_IP_packet(self.fragmentos[id])
+            if ensamblado is not None:
+                print(ensamblado.msg.decode(errors="replace"))
+                del self.fragmentos[id]
     def check_routes(self, routes_file_name: str, destination_address: tuple[str, int]) -> tuple[tuple[str, int], int]:
         lector = open(routes_file_name)
         ip_destino = destination_address[0]

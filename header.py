@@ -35,7 +35,7 @@ class Header:
         offset_str = str(int.from_bytes(self.offset))
         tamaño_str = str(int.from_bytes(self.tamaño))
         flag_str = str(int.from_bytes(self.flag))
-        return f"{s};{puerto_str};{ttl_str};{id_str};{offset_str};{tamaño_str};{flag_str};{self.msg.decode()}"
+        return f"{s};{puerto_str};{ttl_str};{id_str};{offset_str};{tamaño_str};{flag_str};{self.msg.decode(errors='replace')}"
     def packet_size(self):
         # 28 es el tamaño del header
         return 28 + len(self.msg)
