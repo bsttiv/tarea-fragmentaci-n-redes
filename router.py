@@ -2,34 +2,37 @@ import sys
 import socket
 import header
 
+
 def parse_packet(IP_Packet: bytes) -> header.Header:
     # un paquete debe tener por lo menos el tamaño de un header
     if len(IP_Packet) < 28:
         return None
     # los primeros 4 bytes son la ip
-    ip     = ".".join(str(b) for b in IP_Packet[0:4]).encode()
+    ip = ".".join(str(b) for b in IP_Packet[0:4]).encode()
     # los siguientes 2 bytes son el puerto
     puerto = int.from_bytes(IP_Packet[4:6])
     # el siguiente byte es el ttl
-    ttl    = int.from_bytes(IP_Packet[6:7])
+    ttl = int.from_bytes(IP_Packet[6:7])
     # la id son los 8 siguientes bytes
-    id     = int.from_bytes(IP_Packet[7:15])
+    id = int.from_bytes(IP_Packet[7:15])
     # el offset son los 8 siguientes bytes
     offset = int.from_bytes(IP_Packet[15:23])
     # 4 bytes con el tamaño
     tamaño = int.from_bytes(IP_Packet[23:27])
     # la flag solo tiene 1 byte (podría ser un bit, pero se decidió por simplicidad)
-    flag   = int.from_bytes(IP_Packet[27:28])
+    flag = int.from_bytes(IP_Packet[27:28])
     # el resto es el mensaje
-    msg    = IP_Packet[28:]
+    msg = IP_Packet[28:]
     if tamaño != len(msg) or flag not in (0, 1):
         return None
     return header.Header(ip, puerto, msg, ttl, tamaño, flag, id, offset)
 
+
 def create_packet(ip_packet: header.Header) -> bytes:
     return ip_packet.to_packet()
 
-def ip_to_num(ip:str) -> int:
+
+def ip_to_num(ip: str) -> int:
     num = 0
     ip_split = ip.split(".")
     for i in range(4):
@@ -38,19 +41,22 @@ def ip_to_num(ip:str) -> int:
         except Exception:
             print("Formato de IP incorrecto")
             return
-        num |= (val << (8 * (3 - i)))
+        num |= val << (8 * (3 - i))
     return num
+
 
 def num_to_ip(ip_num: int) -> str:
     s = ""
     for i in range(4):
-        s = s + str((ip_num >> (8*(3-i))) & 0xFF) + "."
+        s = s + str((ip_num >> (8 * (3 - i))) & 0xFF) + "."
     return s[:-1]
+
 
 def ip_in_cidr(ip_dest_num: int, cidr_ip: str, cidr_mascara: int) -> bool:
     cidr_ip_num = ip_to_num(cidr_ip)
-    desp = 32-cidr_mascara
+    desp = 32 - cidr_mascara
     return ((ip_dest_num >> desp) ^ (cidr_ip_num >> desp)) == 0
+
 
 def fragment_IP_packet(packet: header.Header, MTU: int):
     if packet.packet_size() <= MTU:
@@ -67,13 +73,14 @@ def fragment_IP_packet(packet: header.Header, MTU: int):
     fragmentos = []
     partes = (len(packet.msg) / trozo).__ceil__()
     for i in range(partes):
-        sl = packet.msg[i*trozo:(i+1)*trozo]
+        sl = packet.msg[i * trozo : (i + 1) * trozo]
         tamaño = len(sl)
-        flag = 1 if i < partes-1 else flag_original
-        offset = offset_base + i*trozo
+        flag = 1 if i < partes - 1 else flag_original
+        offset = offset_base + i * trozo
         p = header.Header(ip_txt, puerto, sl, ttl, tamaño, flag, id, offset)
         fragmentos.append(p)
     return fragmentos
+
 
 def reassemble_IP_packet(fragment_list: list[header.Header]) -> header.Header:
     ordenados = sorted(fragment_list, key=lambda f: int.from_bytes(f.offset))
@@ -88,11 +95,21 @@ def reassemble_IP_packet(fragment_list: list[header.Header]) -> header.Header:
     puerto = int.from_bytes(cualquiera.puerto)
     ttl = int.from_bytes(cualquiera.ttl)
     id = int.from_bytes(cualquiera.id)
-    p = header.Header(num_to_ip(int.from_bytes(cualquiera.ip)).encode(), puerto, b"", ttl, 0, 0, id, 0)
+    p = header.Header(
+        num_to_ip(int.from_bytes(cualquiera.ip)).encode(),
+        puerto,
+        b"",
+        ttl,
+        0,
+        0,
+        id,
+        0,
+    )
     for paquete in ordenados:
         p.msg += paquete.msg
     p.tamaño = len(p.msg).to_bytes(4)
     return p
+
 
 class Router:
     def __init__(self, ip, puerto, archivo):
@@ -108,6 +125,7 @@ class Router:
         self.visitadas = {}
         # Diccionario para los fragmentos
         self.fragmentos = {}
+
     def start(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind((self.ip, self.puerto))
@@ -123,14 +141,18 @@ class Router:
             ip = num_to_ip(int.from_bytes(msg_dec.ip))
             puerto = int.from_bytes(msg_dec.puerto)
             if self.ip != ip or puerto != self.puerto:
-                res = self.check_routes(router_rutas, (ip, puerto))
+                res = self.check_routes(self.archivo, (ip, puerto))
                 if res is None:
-                    print(f"No hay rutas hacia {ip}:{puerto} para paquete {str(msg_dec)}")
+                    print(
+                        f"No hay rutas hacia {ip}:{puerto} para paquete {str(msg_dec)}"
+                    )
                     continue
                 forward, mtu = res
                 paquetes = fragment_IP_packet(msg_dec, mtu)
                 for paquete in paquetes:
-                    print(f"Redirigiendo paquete {str(paquete)} con destino final {ip} desde {self.ip}:{self.puerto} hacia {forward}")
+                    print(
+                        f"Redirigiendo paquete {str(paquete)} con destino final {ip}:{msg_dec.puerto} desde {self.ip}:{self.puerto} hacia {forward}"
+                    )
                     paquete.ttl = (int.from_bytes(paquete.ttl) - 1).to_bytes(1)
                     to_bytes = create_packet(paquete)
                     sock.sendto(to_bytes, forward)
@@ -144,7 +166,10 @@ class Router:
             if ensamblado is not None:
                 print(ensamblado.msg.decode(errors="replace"))
                 del self.fragmentos[id]
-    def check_routes(self, routes_file_name: str, destination_address: tuple[str, int]) -> tuple[tuple[str, int], int]:
+
+    def check_routes(
+        self, routes_file_name: str, destination_address: tuple[str, int]
+    ) -> tuple[tuple[str, int], int]:
         lector = open(routes_file_name)
         ip_destino = destination_address[0]
         ip_dest_num = ip_to_num(ip_destino)
@@ -160,45 +185,56 @@ class Router:
             cidr_dest = linea_split[0].split("/")
             cidr_ip = cidr_dest[0]
             cidr_mascara = int(cidr_dest[1])
-            
+
             # Conjunto de puertos de destino
             inicio_rango_puerto = int(linea_split[1])
             fin_rango_puerto = int(linea_split[2])
-            
+
             # Router al que enviar la peticion
             ip_siguiente = linea_split[3]
             puerto_siguiente = int(linea_split[4])
-            
+
             # MTU
             mtu = int(linea_split[5])
-            
-            if ip_in_cidr(ip_dest_num, cidr_ip, cidr_mascara) and inicio_rango_puerto <= puerto_destino <= fin_rango_puerto:
+
+            if (
+                ip_in_cidr(ip_dest_num, cidr_ip, cidr_mascara)
+                and inicio_rango_puerto <= puerto_destino <= fin_rango_puerto
+            ):
                 if cidr_mascara == 0:
-                    rutas_default.append(((ip_siguiente, puerto_siguiente), mtu))
+                    rutas_default.append(
+                        ((ip_siguiente, puerto_siguiente), mtu)
+                    )
                 else:
-                    posibles_destinos.append(((ip_siguiente, puerto_siguiente), mtu))
+                    posibles_destinos.append(
+                        ((ip_siguiente, puerto_siguiente), mtu)
+                    )
                     lineas_area.append(linea_strip)
         lector.close()
         if len(posibles_destinos) == 0:
             posibles_destinos = rutas_default
             lineas_area = ["default"]
-        if len(posibles_destinos) == 0: return None
+        if len(posibles_destinos) == 0:
+            return None
         area = (routes_file_name, tuple(lineas_area))
         indice = self.visitadas.get(area, 0)
         self.visitadas[area] = (indice + 1) % len(posibles_destinos)
         return posibles_destinos[indice]
-            
+
+
 if __name__ == "__main__":
     args = sys.argv
     if len(args) != 4:
-        print("router.py recibe 3 argumentos: router_ip, router_puerto router_rutas")
+        print(
+            "router.py recibe 3 argumentos: router_ip, router_puerto router_rutas"
+        )
         sys.exit(1)
-    
+
     # Se asume que se entregan los tipos correctos, por simplicidad
     # Se asume tambien que la tabla de rutas tiene el formato correcto
     router_ip = sys.argv[1]
     router_puerto = int(sys.argv[2])
     router_rutas = sys.argv[3]
-    
+
     router = Router(router_ip, router_puerto, router_rutas)
     router.start()
