@@ -151,7 +151,7 @@ class Router:
                 paquetes = fragment_IP_packet(msg_dec, mtu)
                 for paquete in paquetes:
                     print(
-                        f"Redirigiendo paquete {str(paquete)} con destino final {ip}:{msg_dec.puerto} desde {self.ip}:{self.puerto} hacia {forward}"
+                        f"Redirigiendo paquete {str(paquete)} con destino final {ip}:{puerto} desde {self.ip}:{self.puerto} hacia {forward}"
                     )
                     paquete.ttl = (int.from_bytes(paquete.ttl) - 1).to_bytes(1)
                     to_bytes = create_packet(paquete)
